@@ -1,5 +1,10 @@
 package transcript
 
+import (
+	"fmt"
+	"strings"
+)
+
 type TranscriptSnippet struct {
 	Text     string
 	Start    float64
@@ -19,14 +24,88 @@ type TranslationLanguage struct {
 	LanguageCode string
 }
 
-var PLAYABILITY_STATUS []string = []string{
-	"OK",
-	"ERROR",
-	"LOGIN_REQUIRED",
-}
-
 var PLAYABILITY_FAILED_REASON map[string]string = map[string]string{
 	"BOT_DETECTED":      "Sign in to confirm you're not a bot",
 	"AGE_RESTRICTED":    "Sign in to confirm your age",
 	"VIDEO_UNAVAILABLE": "Video unavailable",
+}
+
+func constructVideoUnavailabilitySubreasons(playabilityStatusData map[string]interface{}) []string {
+	if errorScreen, ok := playabilityStatusData["errorScreen"].(map[string]interface{}); ok {
+		if renderer, ok := errorScreen["playerErrorMessageRenderer"].(map[string]interface{}); ok {
+			if subreason, ok := renderer["subreason"].(map[string]interface{}); ok {
+				if runs, ok := subreason["runs"].([]map[string]interface{}); ok {
+					textList := make([]string, 0)
+					for _, run := range runs {
+						runText, ok := run["text"].(string)
+						if !ok {
+							continue
+						}
+						textList = append(textList, runText)
+					}
+					return textList
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func assertPlayability(playabilityStatusData map[string]interface{}) error {
+	playabilityStatus, ok := playabilityStatusData["status"].(string)
+	if !ok {
+		return fmt.Errorf("playability status not found")
+	}
+	if playabilityStatus != "OK" { // TODO: Maybe find a better way to represent this than raw strings
+		reason, ok := playabilityStatusData["reason"].(string)
+		if !ok {
+			return fmt.Errorf("reason not found")
+		}
+		if playabilityStatus == "LOGIN_REQUIRED" {
+			if reason == PLAYABILITY_FAILED_REASON["BOT_DETECTED "] {
+				return fmt.Errorf("Request blocked")
+			} else if reason == PLAYABILITY_FAILED_REASON["AGE_RESTRICTED"] {
+				return fmt.Errorf("Video is age restricted")
+			}
+		} else if playabilityStatus == "ERROR" && reason == PLAYABILITY_FAILED_REASON["VIDEO_UNAVAILABLE"] {
+			subReasons := constructVideoUnavailabilitySubreasons(playabilityStatusData)
+			return fmt.Errorf("video unplayable: reason : %s : subreasons: %v", reason, subReasons)
+		}
+	}
+	return nil
+}
+
+func getCaptionsJsonFromVideoData(videoData map[string]interface{}) (map[string]interface{}, error) {
+	if captions, ok := videoData["captions"].(map[string]interface{}); ok {
+		if renderer, ok := captions["playerCaptionsTracklistRenderer"].(map[string]interface{}); ok {
+			if captionTracks, ok := renderer["captionTracks"].(map[string]interface{}); ok {
+				return captionTracks, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("transcript disabled")
+}
+
+func extractCaptionsJson(html string) (map[string]interface{}, error) {
+	videoData, err := parseJSVars("ytInitialPlayerResponse", html)
+	if err != nil {
+		if strings.Contains(html, "class=\"g-recaptcha\"") {
+			return nil, fmt.Errorf("your IP has been blocked")
+		}
+		return nil, fmt.Errorf("failed to extract captions: %v", err)
+	}
+	playabilityStatusData, ok := videoData["playabilityStatus"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("playability status data not found")
+	}
+	err = assertPlayability(playabilityStatusData)
+	if err != nil {
+		return nil, err
+	}
+	return getCaptionsJsonFromVideoData(videoData)
+}
+
+// TODO from here
+func fetchVideoHtml(videoId string) (string, error) {
+
 }
