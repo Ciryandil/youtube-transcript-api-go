@@ -2,7 +2,13 @@ package transcript
 
 import (
 	"fmt"
+	"html"
+	"net/http"
 	"strings"
+
+	"github.com/Ciryandil/youtube-transcripts-api-go/api/constants"
+	"github.com/Ciryandil/youtube-transcripts-api-go/api/utils"
+	"github.com/Ciryandil/youtube-transcripts-api-go/proxy"
 )
 
 type TranscriptSnippet struct {
@@ -22,6 +28,11 @@ type Transcript struct {
 type TranslationLanguage struct {
 	Language     string
 	LanguageCode string
+}
+
+type TranscriptDownloader struct {
+	client      *http.Client
+	proxyConfig *proxy.ProxyConfig
 }
 
 var PLAYABILITY_FAILED_REASON map[string]string = map[string]string{
@@ -62,7 +73,7 @@ func assertPlayability(playabilityStatusData map[string]interface{}) error {
 			return fmt.Errorf("reason not found")
 		}
 		if playabilityStatus == "LOGIN_REQUIRED" {
-			if reason == PLAYABILITY_FAILED_REASON["BOT_DETECTED "] {
+			if reason == PLAYABILITY_FAILED_REASON["BOT_DETECTED"] {
 				return fmt.Errorf("Request blocked")
 			} else if reason == PLAYABILITY_FAILED_REASON["AGE_RESTRICTED"] {
 				return fmt.Errorf("Video is age restricted")
@@ -105,7 +116,20 @@ func extractCaptionsJson(html string) (map[string]interface{}, error) {
 	return getCaptionsJsonFromVideoData(videoData)
 }
 
-// TODO from here
-func fetchVideoHtml(videoId string) (string, error) {
+// TODO
+func fetchVideoHtml(videoId string, downloader TranscriptDownloader) (string, error) {
+	return "", nil
+}
 
+func fetchHtml(videoId string, downloader TranscriptDownloader) (string, error) {
+	endpoint := fmt.Sprintf("%s%s", constants.WATCH_URL, videoId)
+	resp, statusCode, _, err := utils.HTTPRequest(downloader.client, "GET", endpoint, nil, nil, nil)
+	if err != nil {
+		return "", err
+	}
+	respString := string(resp)
+	if statusCode >= 400 {
+		return "", fmt.Errorf("error fetching video: Code: %d, Response: %s", statusCode, respString)
+	}
+	return html.UnescapeString(respString), nil
 }
